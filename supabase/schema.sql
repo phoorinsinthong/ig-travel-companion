@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS public.checklist_items (
 
 CREATE TABLE IF NOT EXISTS public.personal_checklist_status (
     item_id UUID REFERENCES public.checklist_items(id) ON DELETE CASCADE,
-    user_id REFERENCES public.users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
     is_done BOOLEAN DEFAULT FALSE,
     PRIMARY KEY (item_id, user_id)
 );
@@ -177,43 +177,68 @@ ALTER TABLE public.checklist_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.personal_checklist_status ENABLE ROW LEVEL SECURITY;
 
 -- 1. Everyone can read users profile
+DROP POLICY IF EXISTS "Public users are viewable by everyone" ON public.users;
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.users;
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.users;
 CREATE POLICY "Public users are viewable by everyone" ON public.users FOR SELECT USING (true);
 CREATE POLICY "Users can insert their own profile" ON public.users FOR INSERT WITH CHECK (true);
 CREATE POLICY "Users can update their own profile" ON public.users FOR UPDATE USING (true);
 
 -- 2. Trips: Visible to members or anyone with valid invite token
+DROP POLICY IF EXISTS "Trips are viewable by members" ON public.trips;
+DROP POLICY IF EXISTS "Anyone can create a trip" ON public.trips;
+DROP POLICY IF EXISTS "Trip creator or admin can update trip" ON public.trips;
 CREATE POLICY "Trips are viewable by members" ON public.trips FOR SELECT USING (true);
 CREATE POLICY "Anyone can create a trip" ON public.trips FOR INSERT WITH CHECK (true);
 CREATE POLICY "Trip creator or admin can update trip" ON public.trips FOR UPDATE USING (true);
 
 -- 3. Trip Members
+DROP POLICY IF EXISTS "Trip members viewable by trip members" ON public.trip_members;
+DROP POLICY IF EXISTS "Users can join trips" ON public.trip_members;
+DROP POLICY IF EXISTS "Admins can update or delete trip members" ON public.trip_members;
 CREATE POLICY "Trip members viewable by trip members" ON public.trip_members FOR SELECT USING (true);
 CREATE POLICY "Users can join trips" ON public.trip_members FOR INSERT WITH CHECK (true);
 CREATE POLICY "Admins can update or delete trip members" ON public.trip_members FOR ALL USING (true);
 
 -- 4. Trip Items (Flights, Hotels, Plans, Activities, Expenses, Checklist)
+DROP POLICY IF EXISTS "Trip items viewable by trip members" ON public.flights;
+DROP POLICY IF EXISTS "Members can add flights" ON public.flights;
+DROP POLICY IF EXISTS "Manage flights" ON public.flights;
 CREATE POLICY "Trip items viewable by trip members" ON public.flights FOR SELECT USING (true);
 CREATE POLICY "Members can add flights" ON public.flights FOR INSERT WITH CHECK (true);
 CREATE POLICY "Manage flights" ON public.flights FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Hotels viewable by trip members" ON public.hotels;
+DROP POLICY IF EXISTS "Manage hotels" ON public.hotels;
 CREATE POLICY "Hotels viewable by trip members" ON public.hotels FOR SELECT USING (true);
 CREATE POLICY "Manage hotels" ON public.hotels FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Daily plans viewable by trip members" ON public.daily_plans;
+DROP POLICY IF EXISTS "Manage daily plans" ON public.daily_plans;
 CREATE POLICY "Daily plans viewable by trip members" ON public.daily_plans FOR SELECT USING (true);
 CREATE POLICY "Manage daily plans" ON public.daily_plans FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Activities viewable by trip members" ON public.activities_transit;
+DROP POLICY IF EXISTS "Manage activities" ON public.activities_transit;
 CREATE POLICY "Activities viewable by trip members" ON public.activities_transit FOR SELECT USING (true);
 CREATE POLICY "Manage activities" ON public.activities_transit FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Expenses viewable by trip members" ON public.expenses;
+DROP POLICY IF EXISTS "Manage expenses" ON public.expenses;
 CREATE POLICY "Expenses viewable by trip members" ON public.expenses FOR SELECT USING (true);
 CREATE POLICY "Manage expenses" ON public.expenses FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Expense splits viewable by trip members" ON public.expense_splits;
+DROP POLICY IF EXISTS "Manage expense splits" ON public.expense_splits;
 CREATE POLICY "Expense splits viewable by trip members" ON public.expense_splits FOR SELECT USING (true);
 CREATE POLICY "Manage expense splits" ON public.expense_splits FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Checklist items viewable by trip members" ON public.checklist_items;
+DROP POLICY IF EXISTS "Manage checklist items" ON public.checklist_items;
 CREATE POLICY "Checklist items viewable by trip members" ON public.checklist_items FOR SELECT USING (true);
 CREATE POLICY "Manage checklist items" ON public.checklist_items FOR ALL USING (true);
 
+DROP POLICY IF EXISTS "Personal checklist status viewable" ON public.personal_checklist_status;
 CREATE POLICY "Personal checklist status viewable" ON public.personal_checklist_status FOR ALL USING (true);
 
 -- ==============================================================================
@@ -242,9 +267,17 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- Public Storage Access Policies
+DROP POLICY IF EXISTS "Public Slips Access" ON storage.objects;
+DROP POLICY IF EXISTS "Upload Slips" ON storage.objects;
+DROP POLICY IF EXISTS "Public Tickets Access" ON storage.objects;
+DROP POLICY IF EXISTS "Upload Tickets" ON storage.objects;
+DROP POLICY IF EXISTS "Public Trip Assets Access" ON storage.objects;
+DROP POLICY IF EXISTS "Upload Trip Assets" ON storage.objects;
+
 CREATE POLICY "Public Slips Access" ON storage.objects FOR SELECT USING (bucket_id = 'slips');
 CREATE POLICY "Upload Slips" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'slips');
 CREATE POLICY "Public Tickets Access" ON storage.objects FOR SELECT USING (bucket_id = 'tickets');
 CREATE POLICY "Upload Tickets" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'tickets');
 CREATE POLICY "Public Trip Assets Access" ON storage.objects FOR SELECT USING (bucket_id = 'trip-assets');
 CREATE POLICY "Upload Trip Assets" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'trip-assets');
+

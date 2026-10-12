@@ -32,9 +32,9 @@ export const AdminSuperBar: React.FC = () => {
   const [showMemberModal, setShowMemberModal] = useState(false);
   const [showEditTitleModal, setShowEditTitleModal] = useState(false);
   const [showDatabaseModal, setShowDatabaseModal] = useState(false);
-  const [newTitle, setNewTitle] = useState(currentTrip.title);
+  const [newTitle, setNewTitle] = useState(currentTrip?.title || '');
 
-  if (!isAdmin) return null;
+  if (!isAdmin || !currentTrip) return null;
 
   const inviteUrl = `${window.location.origin}${window.location.pathname}?invite=${currentTrip.invite_token}`;
 

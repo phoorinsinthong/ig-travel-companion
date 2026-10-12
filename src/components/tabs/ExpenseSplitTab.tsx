@@ -27,7 +27,6 @@ export const ExpenseSplitTab: React.FC = () => {
   const {
     expenses,
     currentUser,
-    allUsers,
     isAdmin,
     canManageItem,
     addExpense,
@@ -189,7 +188,7 @@ export const ExpenseSplitTab: React.FC = () => {
       ) : (
         <div className="space-y-3">
           {expenses.map((exp) => {
-            const payer = exp.payer || allUsers.find((u) => u.id === exp.payer_id);
+            const payer = exp.payer || tripMembers.find((m) => m.user_id === exp.payer_id)?.user;
             const isMePayer = exp.payer_id === currentUser.id;
             const mySplit = exp.splits.find((s) => s.user_id === currentUser.id);
 
@@ -478,7 +477,7 @@ export const ExpenseSplitTab: React.FC = () => {
 
             <div className="py-2 flex-1 overflow-y-auto space-y-2.5">
               {activeVerifyExpense.splits.map((split) => {
-                const u = split.user || allUsers.find((x) => x.id === split.user_id);
+                const u = split.user || tripMembers.find((m: { user_id: string; user?: any }) => m.user_id === split.user_id)?.user;
                 const isPayerSelf = split.user_id === activeVerifyExpense.payer_id;
 
                 return (

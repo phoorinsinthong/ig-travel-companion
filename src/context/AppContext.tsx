@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
-  User,
   Trip,
   TripMember,
   Flight,
@@ -10,23 +9,12 @@ import {
   Expense,
   ChecklistItem,
 } from '../types/database';
-import {
-  INITIAL_USERS,
-  INITIAL_TRIP,
-  INITIAL_MEMBERS,
-  INITIAL_FLIGHTS,
-  INITIAL_HOTELS,
-  INITIAL_DAILY_PLANS,
-  INITIAL_ACTIVITIES,
-  INITIAL_EXPENSES,
-  INITIAL_CHECKLIST,
-  INITIAL_PERSONAL_STATUS,
-} from '../data/mockData';
+import { useAuth, AppUser } from './AuthContext';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface AppContextType {
-  currentUser: User;
-  allUsers: User[];
-  currentTrip: Trip;
+  currentUser: AppUser;
+  currentTrip: Trip | null;
   allTrips: Trip[];
   tripMembers: TripMember[];
   flights: Flight[];
@@ -36,6 +24,7 @@ interface AppContextType {
   expenses: Expense[];
   checklists: ChecklistItem[];
   personalChecklistStatus: Record<string, boolean>;
+  isLoadingData: boolean;
 
   // RBAC checks
   isAdmin: boolean;
@@ -44,28 +33,26 @@ interface AppContextType {
 
   // Actions
   setCurrentTrip: (trip: Trip) => void;
-  switchUser: (userId: string) => void;
-  loginWithInstagram: (username: string, fullName: string) => void;
-  createTrip: (trip: Omit<Trip, 'id' | 'invite_token' | 'created_by' | 'created_at'>) => Trip;
-  joinTripByToken: (token: string) => boolean;
-  updateTripTitle: (newTitle: string) => void;
+  createTrip: (trip: Omit<Trip, 'id' | 'invite_token' | 'created_by' | 'created_at'>) => Promise<Trip | null>;
+  joinTripByToken: (token: string) => Promise<boolean>;
+  updateTripTitle: (newTitle: string) => Promise<void>;
 
   // Admin Member Actions
-  kickMember: (userId: string) => void;
-  setMemberRole: (userId: string, role: 'ADMIN' | 'MEMBER') => void;
+  kickMember: (userId: string) => Promise<void>;
+  setMemberRole: (userId: string, role: 'ADMIN' | 'MEMBER') => Promise<void>;
 
   // Items Actions
-  addFlight: (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>) => void;
-  deleteFlight: (id: string) => void;
+  addFlight: (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>) => Promise<void>;
+  deleteFlight: (id: string) => Promise<void>;
 
-  addHotel: (hotel: Omit<Hotel, 'id' | 'trip_id' | 'created_by'>) => void;
-  deleteHotel: (id: string) => void;
+  addHotel: (hotel: Omit<Hotel, 'id' | 'trip_id' | 'created_by'>) => Promise<void>;
+  deleteHotel: (id: string) => Promise<void>;
 
-  addDailyPlan: (plan: Omit<DailyPlan, 'id' | 'trip_id' | 'created_by'>) => void;
-  deleteDailyPlan: (id: string) => void;
+  addDailyPlan: (plan: Omit<DailyPlan, 'id' | 'trip_id' | 'created_by'>) => Promise<void>;
+  deleteDailyPlan: (id: string) => Promise<void>;
 
-  addActivity: (act: Omit<ActivityTransit, 'id' | 'trip_id' | 'created_by'>) => void;
-  deleteActivity: (id: string) => void;
+  addActivity: (act: Omit<ActivityTransit, 'id' | 'trip_id' | 'created_by'>) => Promise<void>;
+  deleteActivity: (id: string) => Promise<void>;
 
   addExpense: (expense: {
     title: string;
@@ -74,353 +61,332 @@ interface AppContextType {
     receipt_url?: string;
     activity_id?: string;
     splitUserIds: string[];
-  }) => void;
-  deleteExpense: (id: string) => void;
-  submitPaymentSlip: (expenseId: string, splitUserId: string, slipUrl: string) => void;
-  confirmPayment: (expenseId: string, splitUserId: string) => void;
+  }) => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
+  submitPaymentSlip: (expenseId: string, splitUserId: string, slipUrl: string) => Promise<void>;
+  confirmPayment: (expenseId: string, splitUserId: string) => Promise<void>;
 
   // Checklist Actions
-  toggleChecklistItem: (itemId: string, isShared: boolean) => void;
-  addChecklistItem: (title: string, category: 'PERSONAL' | 'SHARED', assigned_to?: string) => void;
-  deleteChecklistItem: (id: string) => void;
+  toggleChecklistItem: (itemId: string, isShared: boolean) => Promise<void>;
+  addChecklistItem: (title: string, category: 'PERSONAL' | 'SHARED', assigned_to?: string) => Promise<void>;
+  deleteChecklistItem: (id: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'ig_travel_companion_state_v1';
-
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Load saved state or use initial mock data
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_user`);
-    return saved ? JSON.parse(saved) : INITIAL_USERS[0];
-  });
+  const { appUser } = useAuth();
 
-  const [allUsers, setAllUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_allUsers`);
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
-  });
+  const [allTrips, setAllTrips] = useState<Trip[]>([]);
+  const [currentTrip, setCurrentTripState] = useState<Trip | null>(null);
+  const [tripMembers, setTripMembers] = useState<TripMember[]>([]);
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [hotels, setHotels] = useState<Hotel[]>([]);
+  const [dailyPlans, setDailyPlans] = useState<DailyPlan[]>([]);
+  const [activities, setActivities] = useState<ActivityTransit[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [checklists, setChecklists] = useState<ChecklistItem[]>([]);
+  const [personalChecklistStatus, setPersonalChecklistStatus] = useState<Record<string, boolean>>({});
+  const [isLoadingData, setIsLoadingData] = useState(true);
 
-  const [allTrips, setAllTrips] = useState<Trip[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_allTrips`);
-    return saved ? JSON.parse(saved) : [INITIAL_TRIP];
-  });
-
-  const [currentTrip, setCurrentTrip] = useState<Trip>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_currentTrip`);
-    return saved ? JSON.parse(saved) : INITIAL_TRIP;
-  });
-
-  const [tripMembers, setTripMembers] = useState<TripMember[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_members`);
-    return saved ? JSON.parse(saved) : INITIAL_MEMBERS;
-  });
-
-  const [flights, setFlights] = useState<Flight[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_flights`);
-    return saved ? JSON.parse(saved) : INITIAL_FLIGHTS;
-  });
-
-  const [hotels, setHotels] = useState<Hotel[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_hotels`);
-    return saved ? JSON.parse(saved) : INITIAL_HOTELS;
-  });
-
-  const [dailyPlans, setDailyPlans] = useState<DailyPlan[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_dailyPlans`);
-    return saved ? JSON.parse(saved) : INITIAL_DAILY_PLANS;
-  });
-
-  const [activities, setActivities] = useState<ActivityTransit[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_activities`);
-    return saved ? JSON.parse(saved) : INITIAL_ACTIVITIES;
-  });
-
-  const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_expenses`);
-    return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
-  });
-
-  const [checklists, setChecklists] = useState<ChecklistItem[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_checklists`);
-    return saved ? JSON.parse(saved) : INITIAL_CHECKLIST;
-  });
-
-  const [personalChecklistStatus, setPersonalChecklistStatus] = useState<Record<string, boolean>>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_personalStatus`);
-    return saved ? JSON.parse(saved) : INITIAL_PERSONAL_STATUS;
-  });
-
-  // Save to localStorage on change
+  // Load user's trips from Supabase
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_user`, JSON.stringify(currentUser));
-  }, [currentUser]);
+    if (!appUser || !supabase || !isSupabaseConfigured) {
+      setIsLoadingData(false);
+      return;
+    }
+    const db = supabase;
 
+    const loadTrips = async () => {
+      setIsLoadingData(true);
+      try {
+        // Get all trips where user is a member
+        const { data: memberRows } = await db
+          .from('trip_members')
+          .select('trip_id')
+          .eq('user_id', appUser.id);
+
+        const tripIds = memberRows?.map((r: { trip_id: string }) => r.trip_id) || [];
+
+        if (tripIds.length === 0) {
+          setAllTrips([]);
+          setCurrentTripState(null);
+          setIsLoadingData(false);
+          return;
+        }
+
+        const { data: tripsData } = await db
+          .from('trips')
+          .select('*')
+          .in('id', tripIds)
+          .order('created_at', { ascending: false });
+
+        const trips = tripsData || [];
+        setAllTrips(trips);
+
+        if (trips.length > 0 && !currentTrip) {
+          setCurrentTripState(trips[0]);
+        }
+      } catch (err) {
+        console.error('Error loading trips:', err);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+
+    loadTrips();
+  }, [appUser]);
+
+  // Load trip data when current trip changes
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_allUsers`, JSON.stringify(allUsers));
-  }, [allUsers]);
+    if (!currentTrip || !supabase || !appUser) return;
+    const db = supabase;
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_allTrips`, JSON.stringify(allTrips));
-  }, [allTrips]);
+    const loadTripData = async () => {
+      const tripId = currentTrip.id;
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_currentTrip`, JSON.stringify(currentTrip));
-  }, [currentTrip]);
+      const [membersRes, flightsRes, hotelsRes, plansRes, activitiesRes, expensesRes, checklistRes, personalStatusRes] =
+        await Promise.all([
+          db.from('trip_members').select('*, user:users(*)').eq('trip_id', tripId),
+          db.from('flights').select('*').eq('trip_id', tripId).order('departure_time'),
+          db.from('hotels').select('*').eq('trip_id', tripId).order('check_in'),
+          db.from('daily_plans').select('*').eq('trip_id', tripId).order('plan_date').order('time_slot'),
+          db.from('activities_transit').select('*').eq('trip_id', tripId).order('scheduled_at'),
+          db.from('expenses').select('*, payer:users(*), splits:expense_splits(*, user:users(*))').eq('trip_id', tripId).order('created_at', { ascending: false }),
+          db.from('checklist_items').select('*, assigned_user:users!assigned_to(*)').eq('trip_id', tripId).order('created_at'),
+          db.from('personal_checklist_status').select('*').eq('user_id', appUser.id),
+        ]);
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_members`, JSON.stringify(tripMembers));
-  }, [tripMembers]);
+      setTripMembers((membersRes.data || []) as TripMember[]);
+      setFlights((flightsRes.data || []) as Flight[]);
+      setHotels((hotelsRes.data || []) as Hotel[]);
+      setDailyPlans((plansRes.data || []) as DailyPlan[]);
+      setActivities((activitiesRes.data || []) as ActivityTransit[]);
+      setExpenses((expensesRes.data || []).map((e: any) => ({
+        ...e,
+        splits: (e.splits || []).map((s: any) => ({
+          ...s,
+          user: s.user,
+        })),
+      })) as Expense[]);
+      setChecklists((checklistRes.data || []) as ChecklistItem[]);
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_flights`, JSON.stringify(flights));
-  }, [flights]);
+      const statusMap: Record<string, boolean> = {};
+      (personalStatusRes.data || []).forEach((row: { item_id: string; is_done: boolean }) => {
+        statusMap[row.item_id] = row.is_done;
+      });
+      setPersonalChecklistStatus(statusMap);
+    };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_hotels`, JSON.stringify(hotels));
-  }, [hotels]);
+    loadTripData();
+  }, [currentTrip?.id, appUser?.id]);
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_dailyPlans`, JSON.stringify(dailyPlans));
-  }, [dailyPlans]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_activities`, JSON.stringify(activities));
-  }, [activities]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_expenses`, JSON.stringify(expenses));
-  }, [expenses]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_checklists`, JSON.stringify(checklists));
-  }, [checklists]);
-
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_personalStatus`, JSON.stringify(personalChecklistStatus));
-  }, [personalChecklistStatus]);
-
-  // RBAC checks
-  const currentMember = tripMembers.find(
-    (m) => m.trip_id === currentTrip.id && m.user_id === currentUser.id
-  );
-  const isAdmin = currentMember?.role === 'ADMIN' || currentTrip.created_by === currentUser.id;
-
-  const isCreator = (creatorId: string) => currentUser.id === creatorId;
+  // RBAC
+  const currentMember = tripMembers.find((m) => m.user_id === appUser?.id);
+  const isAdmin = !!(currentMember?.role === 'ADMIN' || currentTrip?.created_by === appUser?.id);
+  const isCreator = (creatorId: string) => appUser?.id === creatorId;
   const canManageItem = (creatorId: string) => isAdmin || isCreator(creatorId);
 
-  // Switch User
-  const switchUser = (userId: string) => {
-    const target = allUsers.find((u) => u.id === userId);
-    if (target) {
-      setCurrentUser(target);
-    }
-  };
-
-  // Instagram Mock Login
-  const loginWithInstagram = (username: string, fullName: string) => {
-    const cleanUsername = username.replace(/^@/, '').toLowerCase().trim();
-    let existing = allUsers.find((u) => u.username.toLowerCase() === cleanUsername);
-    if (!existing) {
-      existing = {
-        id: `usr-${Date.now()}`,
-        ig_user_id: `ig_${Date.now()}`,
-        username: cleanUsername,
-        full_name: fullName || `@${cleanUsername}`,
-        profile_pic_url: `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80`,
-        promptpay_number: '0810000000',
-        promptpay_qr_url: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=PROMPTPAY_${cleanUsername}`,
-      };
-      setAllUsers((prev) => [...prev, existing!]);
-    }
-    setCurrentUser(existing);
-
-    // Auto join current trip if not member
-    const alreadyMember = tripMembers.some(
-      (m) => m.trip_id === currentTrip.id && m.user_id === existing!.id
-    );
-    if (!alreadyMember) {
-      setTripMembers((prev) => [
-        ...prev,
-        {
-          trip_id: currentTrip.id,
-          user_id: existing!.id,
-          role: 'MEMBER',
-          joined_at: new Date().toISOString(),
-          user: existing,
-        },
-      ]);
-    }
+  const setCurrentTrip = (trip: Trip) => {
+    setCurrentTripState(trip);
   };
 
   // Create Trip
-  const createTrip = (tripData: Omit<Trip, 'id' | 'invite_token' | 'created_by' | 'created_at'>) => {
-    const newTripId = `trip-${Date.now()}`;
-    const token = `IG-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-    const newTrip: Trip = {
-      ...tripData,
-      id: newTripId,
-      invite_token: token,
-      created_by: currentUser.id,
-      created_at: new Date().toISOString(),
-    };
-    setAllTrips((prev) => [newTrip, ...prev]);
-    setCurrentTrip(newTrip);
+  const createTrip = async (tripData: Omit<Trip, 'id' | 'invite_token' | 'created_by' | 'created_at'>): Promise<Trip | null> => {
+    if (!supabase || !appUser) return null;
 
-    // Set current user as ADMIN
-    setTripMembers((prev) => [
-      ...prev,
-      {
-        trip_id: newTripId,
-        user_id: currentUser.id,
-        role: 'ADMIN',
-        joined_at: new Date().toISOString(),
-        user: currentUser,
-      },
-    ]);
+    const token = `IG-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const { data: newTrip, error } = await supabase
+      .from('trips')
+      .insert({
+        ...tripData,
+        invite_token: token,
+        created_by: appUser.id,
+      })
+      .select()
+      .single();
+
+    if (error || !newTrip) {
+      console.error('Error creating trip:', error);
+      return null;
+    }
+
+    // Add creator as ADMIN
+    await supabase.from('trip_members').insert({
+      trip_id: newTrip.id,
+      user_id: appUser.id,
+      role: 'ADMIN',
+    });
+
+    setAllTrips((prev) => [newTrip, ...prev]);
+    setCurrentTripState(newTrip);
     return newTrip;
   };
 
-  const updateTripTitle = (newTitle: string) => {
-    setCurrentTrip((prev) => ({ ...prev, title: newTitle }));
-    setAllTrips((prev) => prev.map((t) => (t.id === currentTrip.id ? { ...t, title: newTitle } : t)));
+  const updateTripTitle = async (newTitle: string) => {
+    if (!supabase || !currentTrip) return;
+    await supabase.from('trips').update({ title: newTitle }).eq('id', currentTrip.id);
+    setCurrentTripState((prev) => prev ? { ...prev, title: newTitle } : prev);
+    setAllTrips((prev) => prev.map((t) => t.id === currentTrip.id ? { ...t, title: newTitle } : t));
   };
 
   // Join trip by token
-  const joinTripByToken = (token: string) => {
-    const target = allTrips.find((t) => t.invite_token.toLowerCase() === token.trim().toLowerCase());
-    if (!target) return false;
+  const joinTripByToken = async (token: string): Promise<boolean> => {
+    if (!supabase || !appUser) return false;
 
-    setCurrentTrip(target);
-    const isMember = tripMembers.some((m) => m.trip_id === target.id && m.user_id === currentUser.id);
-    if (!isMember) {
-      setTripMembers((prev) => [
-        ...prev,
-        {
-          trip_id: target.id,
-          user_id: currentUser.id,
-          role: 'MEMBER',
-          joined_at: new Date().toISOString(),
-          user: currentUser,
-        },
-      ]);
+    const { data: trip } = await supabase
+      .from('trips')
+      .select('*')
+      .ilike('invite_token', token.trim())
+      .single();
+
+    if (!trip) return false;
+
+    // Check if already member
+    const { data: existing } = await supabase
+      .from('trip_members')
+      .select('*')
+      .eq('trip_id', trip.id)
+      .eq('user_id', appUser.id)
+      .maybeSingle();
+
+    if (!existing) {
+      await supabase.from('trip_members').insert({
+        trip_id: trip.id,
+        user_id: appUser.id,
+        role: 'MEMBER',
+      });
     }
+
+    setAllTrips((prev) => prev.find((t) => t.id === trip.id) ? prev : [trip, ...prev]);
+    setCurrentTripState(trip);
     return true;
   };
 
   // Member Management
-  const kickMember = (userId: string) => {
-    if (!isAdmin) return;
+  const kickMember = async (userId: string) => {
+    if (!supabase || !isAdmin || !currentTrip) return;
+    await supabase.from('trip_members').delete().eq('trip_id', currentTrip.id).eq('user_id', userId);
     setTripMembers((prev) => prev.filter((m) => !(m.trip_id === currentTrip.id && m.user_id === userId)));
   };
 
-  const setMemberRole = (userId: string, role: 'ADMIN' | 'MEMBER') => {
-    if (!isAdmin) return;
-    setTripMembers((prev) =>
-      prev.map((m) =>
-        m.trip_id === currentTrip.id && m.user_id === userId ? { ...m, role } : m
-      )
-    );
+  const setMemberRole = async (userId: string, role: 'ADMIN' | 'MEMBER') => {
+    if (!supabase || !isAdmin || !currentTrip) return;
+    await supabase.from('trip_members').update({ role }).eq('trip_id', currentTrip.id).eq('user_id', userId);
+    setTripMembers((prev) => prev.map((m) =>
+      m.trip_id === currentTrip.id && m.user_id === userId ? { ...m, role } : m
+    ));
   };
 
   // Flight actions
-  const addFlight = (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>) => {
-    const newFlight: Flight = {
+  const addFlight = async (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>) => {
+    if (!supabase || !appUser || !currentTrip) return;
+    const { data } = await supabase.from('flights').insert({
       ...flight,
-      id: `fl-${Date.now()}`,
       trip_id: currentTrip.id,
-      created_by: currentUser.id,
-    };
-    setFlights((prev) => [...prev, newFlight]);
+      created_by: appUser.id,
+    }).select().single();
+    if (data) setFlights((prev) => [...prev, data as Flight]);
   };
 
-  const deleteFlight = (id: string) => {
+  const deleteFlight = async (id: string) => {
+    if (!supabase) return;
+    await supabase.from('flights').delete().eq('id', id);
     setFlights((prev) => prev.filter((f) => f.id !== id));
   };
 
   // Hotel actions
-  const addHotel = (hotel: Omit<Hotel, 'id' | 'trip_id' | 'created_by'>) => {
-    const newHotel: Hotel = {
+  const addHotel = async (hotel: Omit<Hotel, 'id' | 'trip_id' | 'created_by'>) => {
+    if (!supabase || !appUser || !currentTrip) return;
+    const { data } = await supabase.from('hotels').insert({
       ...hotel,
-      id: `ht-${Date.now()}`,
       trip_id: currentTrip.id,
-      created_by: currentUser.id,
-    };
-    setHotels((prev) => [...prev, newHotel]);
+      created_by: appUser.id,
+    }).select().single();
+    if (data) setHotels((prev) => [...prev, data as Hotel]);
   };
 
-  const deleteHotel = (id: string) => {
+  const deleteHotel = async (id: string) => {
+    if (!supabase) return;
+    await supabase.from('hotels').delete().eq('id', id);
     setHotels((prev) => prev.filter((h) => h.id !== id));
   };
 
   // Daily Plan actions
-  const addDailyPlan = (plan: Omit<DailyPlan, 'id' | 'trip_id' | 'created_by'>) => {
-    const newPlan: DailyPlan = {
+  const addDailyPlan = async (plan: Omit<DailyPlan, 'id' | 'trip_id' | 'created_by'>) => {
+    if (!supabase || !appUser || !currentTrip) return;
+    const { data } = await supabase.from('daily_plans').insert({
       ...plan,
-      id: `dp-${Date.now()}`,
       trip_id: currentTrip.id,
-      created_by: currentUser.id,
-    };
-    setDailyPlans((prev) => [...prev, newPlan]);
+      created_by: appUser.id,
+    }).select().single();
+    if (data) setDailyPlans((prev) => [...prev, data as DailyPlan]);
   };
 
-  const deleteDailyPlan = (id: string) => {
+  const deleteDailyPlan = async (id: string) => {
+    if (!supabase) return;
+    await supabase.from('daily_plans').delete().eq('id', id);
     setDailyPlans((prev) => prev.filter((p) => p.id !== id));
   };
 
   // Activity actions
-  const addActivity = (act: Omit<ActivityTransit, 'id' | 'trip_id' | 'created_by'>) => {
-    const newAct: ActivityTransit = {
+  const addActivity = async (act: Omit<ActivityTransit, 'id' | 'trip_id' | 'created_by'>) => {
+    if (!supabase || !appUser || !currentTrip) return;
+    const { data } = await supabase.from('activities_transit').insert({
       ...act,
-      id: `act-${Date.now()}`,
       trip_id: currentTrip.id,
-      created_by: currentUser.id,
-    };
-    setActivities((prev) => [...prev, newAct]);
+      created_by: appUser.id,
+    }).select().single();
+    if (data) {
+      setActivities((prev) => [...prev, data as ActivityTransit]);
 
-    // If marked has_expense, automatically create expense in "หารโว้ย"
-    if (newAct.has_expense && newAct.expense_amount && newAct.expense_amount > 0) {
-      const activeMembers = tripMembers.filter((m) => m.trip_id === currentTrip.id);
-      const splitAmount = Math.round((newAct.expense_amount / (activeMembers.length || 1)) * 100) / 100;
-      const splits = activeMembers.map((m) => ({
-        id: `sp-${Date.now()}-${m.user_id}`,
-        expense_id: `exp-${Date.now()}`,
-        user_id: m.user_id,
-        amount: splitAmount,
-        status: (m.user_id === currentUser.id ? 'CONFIRMED' : 'UNPAID') as any,
-        user: m.user || allUsers.find((u) => u.id === m.user_id),
-      }));
+      // Auto-create expense if has_expense
+      if ((data as ActivityTransit).has_expense && (data as ActivityTransit).expense_amount) {
+        const splitCount = tripMembers.length || 1;
+        const splitAmount = Math.round(((data as ActivityTransit).expense_amount! / splitCount) * 100) / 100;
 
-      const newExp: Expense = {
-        id: `exp-${Date.now()}`,
-        trip_id: currentTrip.id,
-        payer_id: currentUser.id,
-        title: `🎟️ ${newAct.title}`,
-        total_amount: newAct.expense_amount,
-        currency: 'THB',
-        promptpay_qr_url: currentUser.promptpay_qr_url || '',
-        activity_id: newAct.id,
-        created_by: currentUser.id,
-        created_at: new Date().toISOString(),
-        payer: currentUser,
-        splits,
-      };
-      setExpenses((prev) => [newExp, ...prev]);
+        const { data: newExp } = await supabase.from('expenses').insert({
+          trip_id: currentTrip.id,
+          payer_id: appUser.id,
+          title: `🎟️ ${(data as ActivityTransit).title}`,
+          total_amount: (data as ActivityTransit).expense_amount,
+          currency: 'THB',
+          promptpay_qr_url: appUser.promptpay_qr_url || '',
+          activity_id: (data as ActivityTransit).id,
+          created_by: appUser.id,
+        }).select().single();
+
+        if (newExp) {
+          // Create splits
+          const splitRows = tripMembers.map((m) => ({
+            expense_id: newExp.id,
+            user_id: m.user_id,
+            amount: splitAmount,
+            status: m.user_id === appUser.id ? 'CONFIRMED' : 'UNPAID',
+          }));
+          await supabase.from('expense_splits').insert(splitRows);
+
+          // Reload expenses
+          const { data: fullExp } = await supabase
+            .from('expenses')
+            .select('*, payer:users(*), splits:expense_splits(*, user:users(*))')
+            .eq('id', newExp.id)
+            .single();
+          if (fullExp) setExpenses((prev) => [fullExp as Expense, ...prev]);
+        }
+      }
     }
   };
 
-  const deleteActivity = (id: string) => {
+  const deleteActivity = async (id: string) => {
+    if (!supabase) return;
+    await supabase.from('activities_transit').delete().eq('id', id);
     setActivities((prev) => prev.filter((a) => a.id !== id));
   };
 
   // Expense actions
-  const addExpense = ({
-    title,
-    total_amount,
-    payer_id,
-    receipt_url,
-    activity_id,
-    splitUserIds,
+  const addExpense = async ({
+    title, total_amount, payer_id, receipt_url, activity_id, splitUserIds,
   }: {
     title: string;
     total_amount: number;
@@ -429,140 +395,144 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     activity_id?: string;
     splitUserIds: string[];
   }) => {
-    const expId = `exp-${Date.now()}`;
-    const payer = allUsers.find((u) => u.id === payer_id) || currentUser;
-    const splitCount = splitUserIds.length || 1;
-    const splitAmount = Math.round((total_amount / splitCount) * 100) / 100;
+    if (!supabase || !appUser || !currentTrip) return;
 
-    const splits = splitUserIds.map((uId) => ({
-      id: `sp-${Date.now()}-${uId}`,
-      expense_id: expId,
-      user_id: uId,
-      amount: splitAmount,
-      status: (uId === payer_id ? 'CONFIRMED' : 'UNPAID') as any,
-      user: allUsers.find((u) => u.id === uId),
-    }));
+    const payer = tripMembers.find((m) => m.user_id === payer_id)?.user;
 
-    const newExp: Expense = {
-      id: expId,
+    const { data: newExp } = await supabase.from('expenses').insert({
       trip_id: currentTrip.id,
       payer_id,
       title,
       total_amount,
       currency: 'THB',
       receipt_url,
-      promptpay_qr_url: payer.promptpay_qr_url || '',
+      promptpay_qr_url: (payer as any)?.promptpay_qr_url || '',
       activity_id,
-      created_by: currentUser.id,
-      created_at: new Date().toISOString(),
-      payer,
-      splits,
-    };
-    setExpenses((prev) => [newExp, ...prev]);
+      created_by: appUser.id,
+    }).select().single();
+
+    if (!newExp) return;
+
+    const splitCount = splitUserIds.length || 1;
+    const splitAmount = Math.round((total_amount / splitCount) * 100) / 100;
+
+    const splitRows = splitUserIds.map((uId) => ({
+      expense_id: newExp.id,
+      user_id: uId,
+      amount: splitAmount,
+      status: uId === payer_id ? 'CONFIRMED' : 'UNPAID',
+    }));
+
+    await supabase.from('expense_splits').insert(splitRows);
+
+    // Reload full expense with relations
+    const { data: fullExp } = await supabase
+      .from('expenses')
+      .select('*, payer:users(*), splits:expense_splits(*, user:users(*))')
+      .eq('id', newExp.id)
+      .single();
+    if (fullExp) setExpenses((prev) => [fullExp as Expense, ...prev]);
   };
 
-  const deleteExpense = (id: string) => {
+  const deleteExpense = async (id: string) => {
+    if (!supabase) return;
+    await supabase.from('expenses').delete().eq('id', id);
     setExpenses((prev) => prev.filter((e) => e.id !== id));
   };
 
-  const submitPaymentSlip = (expenseId: string, splitUserId: string, slipUrl: string) => {
-    setExpenses((prev) =>
-      prev.map((exp) => {
-        if (exp.id !== expenseId) return exp;
-        return {
-          ...exp,
-          splits: exp.splits.map((sp) => {
-            if (sp.user_id !== splitUserId) return sp;
-            return {
-              ...sp,
-              status: 'PENDING_VERIFY',
-              slip_url: slipUrl,
-              paid_at: new Date().toISOString(),
-            };
-          }),
-        };
-      })
-    );
+  const submitPaymentSlip = async (expenseId: string, splitUserId: string, slipUrl: string) => {
+    if (!supabase) return;
+    await supabase.from('expense_splits')
+      .update({ status: 'PENDING_VERIFY', slip_url: slipUrl, paid_at: new Date().toISOString() })
+      .eq('expense_id', expenseId)
+      .eq('user_id', splitUserId);
+
+    setExpenses((prev) => prev.map((exp) => {
+      if (exp.id !== expenseId) return exp;
+      return {
+        ...exp,
+        splits: exp.splits.map((sp) =>
+          sp.user_id !== splitUserId ? sp : { ...sp, status: 'PENDING_VERIFY', slip_url: slipUrl, paid_at: new Date().toISOString() }
+        ),
+      };
+    }));
   };
 
-  const confirmPayment = (expenseId: string, splitUserId: string) => {
-    setExpenses((prev) =>
-      prev.map((exp) => {
-        if (exp.id !== expenseId) return exp;
-        return {
-          ...exp,
-          splits: exp.splits.map((sp) => {
-            if (sp.user_id !== splitUserId) return sp;
-            return {
-              ...sp,
-              status: 'CONFIRMED',
-            };
-          }),
-        };
-      })
-    );
+  const confirmPayment = async (expenseId: string, splitUserId: string) => {
+    if (!supabase) return;
+    await supabase.from('expense_splits')
+      .update({ status: 'CONFIRMED' })
+      .eq('expense_id', expenseId)
+      .eq('user_id', splitUserId);
+
+    setExpenses((prev) => prev.map((exp) => {
+      if (exp.id !== expenseId) return exp;
+      return {
+        ...exp,
+        splits: exp.splits.map((sp) =>
+          sp.user_id !== splitUserId ? sp : { ...sp, status: 'CONFIRMED' }
+        ),
+      };
+    }));
   };
 
   // Checklist Actions
-  const toggleChecklistItem = (itemId: string, isShared: boolean) => {
+  const toggleChecklistItem = async (itemId: string, isShared: boolean) => {
+    if (!supabase || !appUser) return;
+
     if (isShared) {
-      setChecklists((prev) =>
-        prev.map((c) => (c.id === itemId ? { ...c, is_shared_done: !c.is_shared_done } : c))
-      );
+      const current = checklists.find((c) => c.id === itemId);
+      const newVal = !current?.is_shared_done;
+      await supabase.from('checklist_items').update({ is_shared_done: newVal }).eq('id', itemId);
+      setChecklists((prev) => prev.map((c) => c.id === itemId ? { ...c, is_shared_done: newVal } : c));
     } else {
-      setPersonalChecklistStatus((prev) => ({
-        ...prev,
-        [itemId]: !prev[itemId],
-      }));
+      const newVal = !personalChecklistStatus[itemId];
+      await supabase.from('personal_checklist_status')
+        .upsert({ item_id: itemId, user_id: appUser.id, is_done: newVal }, { onConflict: 'item_id,user_id' });
+      setPersonalChecklistStatus((prev) => ({ ...prev, [itemId]: newVal }));
     }
   };
 
-  const addChecklistItem = (
-    title: string,
-    category: 'PERSONAL' | 'SHARED',
-    assigned_to?: string
-  ) => {
-    const newItem: ChecklistItem = {
-      id: `chk-${Date.now()}`,
+  const addChecklistItem = async (title: string, category: 'PERSONAL' | 'SHARED', assigned_to?: string) => {
+    if (!supabase || !appUser || !currentTrip) return;
+    const { data } = await supabase.from('checklist_items').insert({
       trip_id: currentTrip.id,
       category,
       title,
-      assigned_to: category === 'SHARED' ? assigned_to : undefined,
+      assigned_to: category === 'SHARED' ? assigned_to || null : null,
       is_shared_done: false,
-      created_by: currentUser.id,
-      assigned_user: allUsers.find((u) => u.id === assigned_to),
-    };
-    setChecklists((prev) => [...prev, newItem]);
+      created_by: appUser.id,
+    }).select('*, assigned_user:users!assigned_to(*)').single();
+    if (data) setChecklists((prev) => [...prev, data as ChecklistItem]);
   };
 
-  const deleteChecklistItem = (id: string) => {
+  const deleteChecklistItem = async (id: string) => {
+    if (!supabase) return;
+    await supabase.from('checklist_items').delete().eq('id', id);
     setChecklists((prev) => prev.filter((c) => c.id !== id));
   };
+
+  if (!appUser) return null; // Should never reach here (App.tsx guards this)
 
   return (
     <AppContext.Provider
       value={{
-        currentUser,
-        allUsers,
+        currentUser: appUser,
         currentTrip,
         allTrips,
-        tripMembers: tripMembers.map((m) => ({
-          ...m,
-          user: allUsers.find((u) => u.id === m.user_id) || m.user,
-        })),
-        flights: flights.filter((f) => f.trip_id === currentTrip.id),
-        hotels: hotels.filter((h) => h.trip_id === currentTrip.id),
-        dailyPlans: dailyPlans.filter((p) => p.trip_id === currentTrip.id),
-        activities: activities.filter((a) => a.trip_id === currentTrip.id),
-        expenses: expenses.filter((e) => e.trip_id === currentTrip.id),
-        checklists: checklists.filter((c) => c.trip_id === currentTrip.id),
+        tripMembers,
+        flights,
+        hotels,
+        dailyPlans,
+        activities,
+        expenses,
+        checklists,
         personalChecklistStatus,
+        isLoadingData,
         isAdmin,
         isCreator,
         canManageItem,
         setCurrentTrip,
-        switchUser,
-        loginWithInstagram,
         createTrip,
         joinTripByToken,
         updateTripTitle,

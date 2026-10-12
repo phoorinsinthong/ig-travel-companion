@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, Users, KeyRound, Check, AlertCircle } from 'lucide-react';
+import { X, KeyRound, AlertCircle, Loader2 } from 'lucide-react';
 
 interface JoinTripModalProps {
   isOpen: boolean;
@@ -8,20 +8,25 @@ interface JoinTripModalProps {
 }
 
 export const JoinTripModal: React.FC<JoinTripModalProps> = ({ isOpen, onClose }) => {
-  const { joinTripByToken, allTrips } = useApp();
+  const { joinTripByToken } = useApp();
 
   const [token, setToken] = useState('');
   const [error, setError] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token.trim()) return;
 
-    const success = joinTripByToken(token.trim());
+    setIsLoading(true);
+    const success = await joinTripByToken(token.trim());
+    setIsLoading(false);
+
     if (success) {
       setError(false);
+      setToken('');
       onClose();
     } else {
       setError(true);
@@ -61,7 +66,7 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({ isOpen, onClose })
                 setToken(e.target.value.toUpperCase());
                 setError(false);
               }}
-              placeholder="เช่น TOKYO-IG-8899"
+              placeholder="เช่น IG-ABC123"
               className="w-full mt-1 px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono uppercase text-sm focus:outline-none focus:border-pink-500"
             />
           </div>
@@ -69,26 +74,9 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({ isOpen, onClose })
           {error && (
             <div className="flex items-center space-x-1.5 p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
               <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>ไม่พบทริปที่มี Token นี้ หรือรหัสหมดอายุ</span>
+              <span>ไม่พบทริปที่มี Token นี้ กรุณาตรวจสอบรหัสอีกครั้ง</span>
             </div>
           )}
-
-          {/* Quick presets for existing trips */}
-          <div className="space-y-1 pt-1">
-            <span className="text-[10px] text-slate-500 font-semibold uppercase">Token ที่มีอยู่ในระบบ:</span>
-            <div className="flex flex-wrap gap-1.5">
-              {allTrips.map((t) => (
-                <button
-                  type="button"
-                  key={t.id}
-                  onClick={() => setToken(t.invite_token)}
-                  className="text-[10px] px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 font-mono border border-slate-700"
-                >
-                  {t.invite_token}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800">
             <button
@@ -100,9 +88,17 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({ isOpen, onClose })
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 rounded-xl font-bold text-white bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-md shadow-pink-600/20"
+              disabled={isLoading}
+              className="px-5 py-2.5 rounded-xl font-bold text-white bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-md shadow-pink-600/20 disabled:opacity-60 flex items-center space-x-2"
             >
-              เข้าร่วมทริป
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>กำลังเข้าร่วม...</span>
+                </>
+              ) : (
+                <span>เข้าร่วมทริป</span>
+              )}
             </button>
           </div>
         </form>

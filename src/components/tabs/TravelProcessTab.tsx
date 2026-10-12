@@ -14,6 +14,7 @@ import {
   FileText,
   AlertCircle,
   Navigation,
+  Loader2,
 } from 'lucide-react';
 
 export const TravelProcessTab: React.FC = () => {
@@ -47,10 +48,55 @@ export const TravelProcessTab: React.FC = () => {
   const [newFlightNo, setNewFlightNo] = useState('TG676');
   const [newDepAirport, setNewDepAirport] = useState('BKK');
   const [newArrAirport, setNewArrAirport] = useState('HND');
+  const [newFlightDate, setNewFlightDate] = useState(
+    currentTrip?.start_date || new Date().toISOString().split('T')[0]
+  );
   const [newDepTime, setNewDepTime] = useState('07:35');
   const [newArrTime, setNewArrTime] = useState('15:45');
   const [newTerminal, setNewTerminal] = useState('T3');
   const [newPnr, setNewPnr] = useState('TG88J2');
+  const [isSubmittingFlight, setIsSubmittingFlight] = useState(false);
+  const [flightError, setFlightError] = useState<string | null>(null);
+
+  const formatToIsoTimestamp = (dateStr: string, timeStr: string): string => {
+    try {
+      const dStr = dateStr || (currentTrip?.start_date || new Date().toISOString().split('T')[0]);
+      if (!timeStr) return new Date(`${dStr}T00:00:00+07:00`).toISOString();
+      if (timeStr.includes('T')) return new Date(timeStr).toISOString();
+      const cleanTime = timeStr.trim();
+      const formattedTime = cleanTime.length === 5 ? `${cleanTime}:00` : cleanTime;
+      const d = new Date(`${dStr}T${formattedTime}+07:00`);
+      if (isNaN(d.getTime())) {
+        return new Date().toISOString();
+      }
+      return d.toISOString();
+    } catch {
+      return new Date().toISOString();
+    }
+  };
+
+  const formatDisplayTime = (timeStr: string) => {
+    if (!timeStr) return '--:--';
+    try {
+      const d = new Date(timeStr);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+      }
+    } catch {}
+    if (timeStr.includes('T')) return timeStr.split('T')[1].substring(0, 5);
+    return timeStr;
+  };
+
+  const formatDisplayDate = (timeStr: string) => {
+    if (!timeStr) return '';
+    try {
+      const d = new Date(timeStr);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+      }
+    } catch {}
+    return '';
+  };
 
   const [newHotelName, setNewHotelName] = useState('');
   const [newCheckIn, setNewCheckIn] = useState('2026-10-18');
@@ -202,9 +248,12 @@ export const TravelProcessTab: React.FC = () => {
                         {flight.departure_airport}
                       </div>
                       <div className="text-xs font-semibold text-pink-400 mt-1">
-                        {flight.departure_time.includes('T')
-                          ? flight.departure_time.split('T')[1].substring(0, 5)
-                          : flight.departure_time}
+                        {formatDisplayTime(flight.departure_time)}
+                        {formatDisplayDate(flight.departure_time) && (
+                          <span className="text-[10px] text-slate-400 ml-1.5 font-normal">
+                            ({formatDisplayDate(flight.departure_time)})
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -227,9 +276,12 @@ export const TravelProcessTab: React.FC = () => {
                         {flight.arrival_airport}
                       </div>
                       <div className="text-xs font-semibold text-orange-400 mt-1">
-                        {flight.arrival_time.includes('T')
-                          ? flight.arrival_time.split('T')[1].substring(0, 5)
-                          : flight.arrival_time}
+                        {formatDisplayTime(flight.arrival_time)}
+                        {formatDisplayDate(flight.arrival_time) && (
+                          <span className="text-[10px] text-slate-400 ml-1.5 font-normal">
+                            ({formatDisplayDate(flight.arrival_time)})
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -496,80 +548,108 @@ export const TravelProcessTab: React.FC = () => {
       {showFlightModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-[#161722] border border-slate-700 rounded-3xl p-5 shadow-2xl space-y-3">
-            <h3 className="text-sm font-bold text-white flex items-center space-x-1.5">
-              <Plane className="w-4 h-4 text-pink-400" />
-              <span>เพิ่มเที่ยวบินใหม่</span>
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center space-x-1.5">
+                <Plane className="w-4 h-4 text-pink-400" />
+                <span>เพิ่มเที่ยวบินใหม่</span>
+              </h3>
+              <button
+                onClick={() => {
+                  setShowFlightModal(false);
+                  setFlightError(null);
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-            <div className="space-y-2 text-xs">
+            {flightError && (
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{flightError}</span>
+              </div>
+            )}
+
+            <div className="space-y-2.5 text-xs">
               <div>
-                <label className="text-slate-400">สายการบิน & เที่ยวบิน</label>
+                <label className="text-slate-400 font-medium">สายการบิน & เที่ยวบิน</label>
                 <div className="grid grid-cols-2 gap-2 mt-1">
                   <input
                     value={newAirline}
                     onChange={(e) => setNewAirline(e.target.value)}
                     placeholder="เช่น Thai Airways"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-pink-500"
                   />
                   <input
                     value={newFlightNo}
                     onChange={(e) => setNewFlightNo(e.target.value)}
                     placeholder="เช่น TG676"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 uppercase font-mono focus:outline-none focus:border-pink-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-slate-400">สนามบินต้นทาง ➔ ปลายทาง</label>
+                <label className="text-slate-400 font-medium">วันที่เดินทาง</label>
+                <input
+                  type="date"
+                  value={newFlightDate}
+                  onChange={(e) => setNewFlightDate(e.target.value)}
+                  className="w-full mt-1 px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-pink-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-medium">เวลาออก ➔ เวลาถึง</label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <input
+                    type="time"
+                    value={newDepTime}
+                    onChange={(e) => setNewDepTime(e.target.value)}
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-pink-500"
+                  />
+                  <input
+                    type="time"
+                    value={newArrTime}
+                    onChange={(e) => setNewArrTime(e.target.value)}
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-pink-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-medium">สนามบินต้นทาง ➔ ปลายทาง</label>
                 <div className="grid grid-cols-2 gap-2 mt-1">
                   <input
                     value={newDepAirport}
                     onChange={(e) => setNewDepAirport(e.target.value)}
                     placeholder="BKK"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white uppercase placeholder-slate-500 focus:outline-none focus:border-pink-500"
                   />
                   <input
                     value={newArrAirport}
                     onChange={(e) => setNewArrAirport(e.target.value)}
                     placeholder="HND"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white uppercase placeholder-slate-500 focus:outline-none focus:border-pink-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-slate-400">เวลาออก ➔ เวลาถึง</label>
-                <div className="grid grid-cols-2 gap-2 mt-1">
-                  <input
-                    value={newDepTime}
-                    onChange={(e) => setNewDepTime(e.target.value)}
-                    placeholder="07:35"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
-                  />
-                  <input
-                    value={newArrTime}
-                    onChange={(e) => setNewArrTime(e.target.value)}
-                    placeholder="15:45"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-slate-400">Terminal & PNR Code</label>
+                <label className="text-slate-400 font-medium">Terminal & PNR Code</label>
                 <div className="grid grid-cols-2 gap-2 mt-1">
                   <input
                     value={newTerminal}
                     onChange={(e) => setNewTerminal(e.target.value)}
-                    placeholder="T3"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
+                    placeholder="เช่น T3 (ไม่บังคับ)"
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-pink-500"
                   />
                   <input
                     value={newPnr}
                     onChange={(e) => setNewPnr(e.target.value)}
-                    placeholder="TG88J2"
-                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white uppercase font-mono"
+                    placeholder="เช่น TG88J2"
+                    className="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white uppercase font-mono placeholder-slate-500 focus:outline-none focus:border-pink-500"
                   />
                 </div>
               </div>
@@ -577,29 +657,69 @@ export const TravelProcessTab: React.FC = () => {
 
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button
-                onClick={() => setShowFlightModal(false)}
+                type="button"
+                onClick={() => {
+                  setShowFlightModal(false);
+                  setFlightError(null);
+                }}
+                disabled={isSubmittingFlight}
                 className="px-3 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
               >
                 ยกเลิก
               </button>
               <button
-                onClick={() => {
-                  addFlight({
-                    airline: newAirline,
-                    flight_number: newFlightNo,
-                    departure_airport: newDepAirport,
-                    arrival_airport: newArrAirport,
-                    departure_time: newDepTime,
-                    arrival_time: newArrTime,
-                    terminal: newTerminal,
-                    pnr_code: newPnr,
-                    ticket_file_url: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=BOARDING-${newFlightNo}-${newPnr}`,
+                type="button"
+                disabled={isSubmittingFlight}
+                onClick={async () => {
+                  if (!newAirline.trim() || !newFlightNo.trim()) {
+                    setFlightError('กรุณากรอกสายการบินและเลขเที่ยวบิน');
+                    return;
+                  }
+                  if (!newDepAirport.trim() || !newArrAirport.trim()) {
+                    setFlightError('กรุณากรอกสนามบินต้นทางและปลายทาง');
+                    return;
+                  }
+                  if (!newPnr.trim()) {
+                    setFlightError('กรุณากรอกรหัส PNR Code');
+                    return;
+                  }
+
+                  setIsSubmittingFlight(true);
+                  setFlightError(null);
+
+                  const depIso = formatToIsoTimestamp(newFlightDate, newDepTime);
+                  const arrIso = formatToIsoTimestamp(newFlightDate, newArrTime);
+
+                  const res = await addFlight({
+                    airline: newAirline.trim(),
+                    flight_number: newFlightNo.trim().toUpperCase(),
+                    departure_airport: newDepAirport.trim().toUpperCase(),
+                    arrival_airport: newArrAirport.trim().toUpperCase(),
+                    departure_time: depIso,
+                    arrival_time: arrIso,
+                    terminal: newTerminal.trim() || undefined,
+                    pnr_code: newPnr.trim().toUpperCase(),
+                    ticket_file_url: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=BOARDING-${newFlightNo.trim().toUpperCase()}-${newPnr.trim().toUpperCase()}`,
                   });
-                  setShowFlightModal(false);
+
+                  setIsSubmittingFlight(false);
+
+                  if (res?.error) {
+                    setFlightError(res.error);
+                  } else {
+                    setShowFlightModal(false);
+                  }
                 }}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-pink-600/20"
+                className="flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-pink-600/20 disabled:opacity-50"
               >
-                บันทึกเที่ยวบิน
+                {isSubmittingFlight ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังบันทึก...</span>
+                  </>
+                ) : (
+                  <span>บันทึกเที่ยวบิน</span>
+                )}
               </button>
             </div>
           </div>

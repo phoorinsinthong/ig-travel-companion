@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Receipt,
@@ -15,6 +15,7 @@ import {
   CreditCard,
   Sparkles,
   Download,
+  Loader2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { QRCodeSVG } from 'qrcode.react';
@@ -49,6 +50,23 @@ export const ExpenseSplitTab: React.FC = () => {
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>(
     tripMembers.map((m) => m.user_id)
   );
+  const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Sync selected members when trip members load
+  useEffect(() => {
+    if (tripMembers.length > 0) {
+      if (selectedUserIds.length === 0) {
+        setSelectedUserIds(tripMembers.map((m) => m.user_id));
+      }
+      if (!newPayerId || !tripMembers.some((m) => m.user_id === newPayerId)) {
+        const fallbackPayer = tripMembers.some((m) => m.user_id === currentUser.id)
+          ? currentUser.id
+          : tripMembers[0].user_id;
+        setNewPayerId(fallbackPayer);
+      }
+    }
+  }, [tripMembers, currentUser?.id]);
 
   // Payment modal state
   const [copiedAmount, setCopiedAmount] = useState(false);
@@ -168,7 +186,11 @@ export const ExpenseSplitTab: React.FC = () => {
 
         <button
           onClick={() => {
-            setNewPayerId(currentUser.id);
+            setFormError(null);
+            const defaultPayer = tripMembers.some((m) => m.user_id === currentUser.id)
+              ? currentUser.id
+              : tripMembers[0]?.user_id || currentUser.id;
+            setNewPayerId(defaultPayer);
             setSelectedUserIds(tripMembers.map((m) => m.user_id));
             setShowAddModal(true);
           }}
@@ -573,54 +595,94 @@ export const ExpenseSplitTab: React.FC = () => {
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-[#161722] border border-slate-700 rounded-3xl p-5 shadow-2xl space-y-3">
-            <h3 className="text-sm font-bold text-white flex items-center space-x-1.5">
-              <Receipt className="w-4 h-4 text-pink-400" />
-              <span>สร้างบิลใหม่ (หารโว้ย)</span>
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center space-x-1.5">
+                <Receipt className="w-4 h-4 text-pink-400" />
+                <span>สร้างบิลใหม่ (หารโว้ย)</span>
+              </h3>
+              <button
+                onClick={() => {
+                  setShowAddModal(false);
+                  setFormError(null);
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-            <div className="space-y-2 text-xs">
+            {formError && (
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{formError}</span>
+              </div>
+            )}
+
+            <div className="space-y-3 text-xs">
               <div>
-                <label className="text-slate-400">ชื่อรายการ</label>
+                <label className="text-slate-400 font-medium">ชื่อรายการ</label>
                 <input
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   placeholder="เช่น มื้อค่ำร้านเนื้อย่าง Jumbo"
-                  className="w-full mt-1 px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
+                  className="w-full mt-1 px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-pink-500"
                 />
               </div>
 
               <div>
-                <label className="text-slate-400">ยอดเงินรวม (บาท)</label>
+                <label className="text-slate-400 font-medium">ยอดเงินรวม (บาท)</label>
                 <input
                   type="number"
-                  value={newTotal}
+                  min="1"
+                  step="any"
+                  value={newTotal || ''}
                   onChange={(e) => setNewTotal(Number(e.target.value))}
                   placeholder="1000"
-                  className="w-full mt-1 px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold"
+                  className="w-full mt-1 px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold focus:outline-none focus:border-pink-500"
                 />
               </div>
 
               <div>
-                <label className="text-slate-400">ใครเป็นคนออกเงินก่อน?</label>
+                <label className="text-slate-400 font-medium">ใครเป็นคนออกเงินก่อน?</label>
                 <select
                   value={newPayerId}
                   onChange={(e) => setNewPayerId(e.target.value)}
-                  className="w-full mt-1 px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white"
+                  className="w-full mt-1 px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-pink-500"
                 >
                   {tripMembers.map((m) => (
                     <option key={m.user_id} value={m.user_id}>
-                      @{m.user?.username} ({m.user?.full_name})
+                      @{m.user?.username} ({m.user?.full_name || m.user?.username})
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="text-slate-400">
-                  เลือกเพื่อนที่ร่วมหาร ({selectedUserIds.length} คน • ตกคนละ ฿
-                  {Math.round(newTotal / (selectedUserIds.length || 1))})
-                </label>
-                <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-400 font-medium">
+                    เลือกเพื่อนร่วมหาร ({selectedUserIds.length} คน • ตกคนละ ฿
+                    {Math.round(newTotal / (selectedUserIds.length || 1))})
+                  </label>
+                  <div className="flex items-center space-x-1.5 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUserIds(tripMembers.map((m) => m.user_id))}
+                      className="text-pink-400 hover:text-pink-300 font-medium"
+                    >
+                      เลือกทุกคน
+                    </button>
+                    <span className="text-slate-600">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUserIds([])}
+                      className="text-slate-400 hover:text-white"
+                    >
+                      ล้าง
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5 mt-1.5 max-h-36 overflow-y-auto pr-1">
                   {tripMembers.map((m) => {
                     const isChecked = selectedUserIds.includes(m.user_id);
                     return (
@@ -629,7 +691,7 @@ export const ExpenseSplitTab: React.FC = () => {
                         className={`flex items-center space-x-2 p-2 rounded-xl border cursor-pointer transition-colors ${
                           isChecked
                             ? 'bg-pink-500/15 border-pink-500/40 text-white'
-                            : 'bg-slate-800 border-slate-700 text-slate-400'
+                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
                         }`}
                       >
                         <input
@@ -645,7 +707,7 @@ export const ExpenseSplitTab: React.FC = () => {
                           className="hidden"
                         />
                         <img
-                          src={m.user?.profile_pic_url}
+                          src={m.user?.profile_pic_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(m.user?.username || 'User')}&background=833AB4&color=fff&size=150`}
                           alt=""
                           className="w-5 h-5 rounded-full object-cover shrink-0"
                         />
@@ -659,27 +721,67 @@ export const ExpenseSplitTab: React.FC = () => {
 
             <div className="flex items-center justify-end space-x-2 pt-2">
               <button
-                onClick={() => setShowAddModal(false)}
+                type="button"
+                onClick={() => {
+                  setShowAddModal(false);
+                  setFormError(null);
+                }}
+                disabled={isSubmittingExpense}
                 className="px-3 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
               >
                 ยกเลิก
               </button>
               <button
-                onClick={() => {
-                  if (newTitle.trim() && newTotal > 0 && selectedUserIds.length > 0) {
-                    addExpense({
-                      title: newTitle.trim(),
-                      total_amount: newTotal,
-                      payer_id: newPayerId,
-                      splitUserIds: selectedUserIds,
-                    });
+                type="button"
+                disabled={isSubmittingExpense}
+                onClick={async () => {
+                  if (!newTitle.trim()) {
+                    setFormError('กรุณากรอกชื่อรายการบิล');
+                    return;
+                  }
+                  if (!newTotal || newTotal <= 0) {
+                    setFormError('กรุณาระบุยอดเงินที่มากกว่า 0');
+                    return;
+                  }
+                  if (selectedUserIds.length === 0) {
+                    setFormError('กรุณาเลือกเพื่อนร่วมหารอย่างน้อย 1 คน');
+                    return;
+                  }
+                  const payerToUse = newPayerId || currentUser?.id || tripMembers[0]?.user_id;
+                  if (!payerToUse) {
+                    setFormError('ไม่พบข้อมูลผู้จ่ายเงิน');
+                    return;
+                  }
+
+                  setIsSubmittingExpense(true);
+                  setFormError(null);
+
+                  const res = await addExpense({
+                    title: newTitle.trim(),
+                    total_amount: newTotal,
+                    payer_id: payerToUse,
+                    splitUserIds: selectedUserIds,
+                  });
+
+                  setIsSubmittingExpense(false);
+
+                  if (res?.error) {
+                    setFormError(res.error);
+                  } else {
                     setNewTitle('');
                     setShowAddModal(false);
                   }
                 }}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-pink-600/20"
+                className="flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-pink-600/20 disabled:opacity-50"
               >
-                บันทึกบิลหาร
+                {isSubmittingExpense ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังสร้างบิล...</span>
+                  </>
+                ) : (
+                  <span>บันทึกบิลหาร</span>
+                )}
               </button>
             </div>
           </div>

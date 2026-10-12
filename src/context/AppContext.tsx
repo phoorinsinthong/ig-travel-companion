@@ -42,7 +42,7 @@ interface AppContextType {
   setMemberRole: (userId: string, role: 'ADMIN' | 'MEMBER') => Promise<void>;
 
   // Items Actions
-  addFlight: (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>) => Promise<void>;
+  addFlight: (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>) => Promise<{ error: string | null }>;
   deleteFlight: (id: string) => Promise<void>;
 
   addHotel: (hotel: Omit<Hotel, 'id' | 'trip_id' | 'created_by'>) => Promise<void>;
@@ -61,7 +61,7 @@ interface AppContextType {
     receipt_url?: string;
     activity_id?: string;
     splitUserIds: string[];
-  }) => Promise<void>;
+  }) => Promise<{ error: string | null }>;
   deleteExpense: (id: string) => Promise<void>;
   submitPaymentSlip: (expenseId: string, splitUserId: string, slipUrl: string) => Promise<void>;
   confirmPayment: (expenseId: string, splitUserId: string) => Promise<void>;
@@ -152,7 +152,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           db.from('hotels').select('*').eq('trip_id', tripId).order('check_in'),
           db.from('daily_plans').select('*').eq('trip_id', tripId).order('plan_date').order('time_slot'),
           db.from('activities_transit').select('*').eq('trip_id', tripId).order('scheduled_at'),
-          db.from('expenses').select('*, payer:users(*), splits:expense_splits(*, user:users(*))').eq('trip_id', tripId).order('created_at', { ascending: false }),
+          db.from('expenses').select('*, payer:users!expenses_payer_id_fkey(*), splits:expense_splits(*, user:users(*))').eq('trip_id', tripId).order('created_at', { ascending: false }),
           db.from('checklist_items').select('*, assigned_user:users!assigned_to(*)').eq('trip_id', tripId).order('created_at'),
           db.from('personal_checklist_status').select('*').eq('user_id', appUser.id),
         ]);
@@ -279,14 +279,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Flight actions
-  const addFlight = async (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>) => {
-    if (!supabase || !appUser || !currentTrip) return;
-    const { data } = await supabase.from('flights').insert({
+  const addFlight = async (flight: Omit<Flight, 'id' | 'trip_id' | 'created_by'>): Promise<{ error: string | null }> => {
+    if (!supabase || !appUser || !currentTrip) {
+      return { error: 'กรุณาเข้าสู่ระบบและเลือกทริปก่อน' };
+    }
+    const { data, error } = await supabase.from('flights').insert({
       ...flight,
       trip_id: currentTrip.id,
       created_by: appUser.id,
     }).select().single();
+
+    if (error) {
+      console.error('Error adding flight:', error);
+      return { error: error.message };
+    }
     if (data) setFlights((prev) => [...prev, data as Flight]);
+    return { error: null };
   };
 
   const deleteFlight = async (id: string) => {
@@ -369,7 +377,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Reload expenses
           const { data: fullExp } = await supabase
             .from('expenses')
-            .select('*, payer:users(*), splits:expense_splits(*, user:users(*))')
+            .select('*, payer:users!expenses_payer_id_fkey(*), splits:expense_splits(*, user:users(*))')
             .eq('id', newExp.id)
             .single();
           if (fullExp) setExpenses((prev) => [fullExp as Expense, ...prev]);
@@ -394,24 +402,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     receipt_url?: string;
     activity_id?: string;
     splitUserIds: string[];
-  }) => {
-    if (!supabase || !appUser || !currentTrip) return;
+  }): Promise<{ error: string | null }> => {
+    if (!supabase || !appUser || !currentTrip) {
+      return { error: 'กรุณาเข้าสู่ระบบและเลือกทริปก่อน' };
+    }
 
     const payer = tripMembers.find((m) => m.user_id === payer_id)?.user;
 
-    const { data: newExp } = await supabase.from('expenses').insert({
+    const { data: newExp, error: insertError } = await supabase.from('expenses').insert({
       trip_id: currentTrip.id,
       payer_id,
       title,
       total_amount,
       currency: 'THB',
-      receipt_url,
+      receipt_url: receipt_url || null,
       promptpay_qr_url: (payer as any)?.promptpay_qr_url || '',
-      activity_id,
+      activity_id: activity_id || null,
       created_by: appUser.id,
     }).select().single();
 
-    if (!newExp) return;
+    if (insertError || !newExp) {
+      console.error('Error inserting expense:', insertError);
+      return { error: insertError?.message || 'ไม่สามารถสร้างบิลได้' };
+    }
 
     const splitCount = splitUserIds.length || 1;
     const splitAmount = Math.round((total_amount / splitCount) * 100) / 100;
@@ -423,15 +436,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: uId === payer_id ? 'CONFIRMED' : 'UNPAID',
     }));
 
-    await supabase.from('expense_splits').insert(splitRows);
+    const { error: splitError } = await supabase.from('expense_splits').insert(splitRows);
+    if (splitError) {
+      console.error('Error inserting splits:', splitError);
+    }
 
     // Reload full expense with relations
-    const { data: fullExp } = await supabase
+    const { data: fullExp, error: fetchError } = await supabase
       .from('expenses')
-      .select('*, payer:users(*), splits:expense_splits(*, user:users(*))')
+      .select('*, payer:users!expenses_payer_id_fkey(*), splits:expense_splits(*, user:users(*))')
       .eq('id', newExp.id)
       .single();
-    if (fullExp) setExpenses((prev) => [fullExp as Expense, ...prev]);
+
+    if (fetchError) {
+      console.error('Error fetching full expense:', fetchError);
+    }
+
+    if (fullExp) {
+      setExpenses((prev) => [fullExp as Expense, ...prev]);
+    } else {
+      // Fallback reload all expenses for the trip to ensure sync
+      const { data: allExp } = await supabase
+        .from('expenses')
+        .select('*, payer:users!expenses_payer_id_fkey(*), splits:expense_splits(*, user:users(*))')
+        .eq('trip_id', currentTrip.id)
+        .order('created_at', { ascending: false });
+      if (allExp) {
+        setExpenses(allExp as Expense[]);
+      }
+    }
+
+    return { error: null };
   };
 
   const deleteExpense = async (id: string) => {
